@@ -1,0 +1,186 @@
+---
+title: "Machine Learning Course Project"
+author: "Atchaya S"
+date: "13/07/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Overview**  
+This document is the final report of the Peer Assessment project from Coursera’s course Practical Machine Learning, as part of the Specialization in Data Science. It was built up in RStudio, using its knitr functions, meant to be published in html format.
+This analysis meant to be the basis for the course quiz and a prediction assignment writeup. The main goal of the project is to predict the manner in which 6 participants performed some exercise as described below. This is the “classe” variable in the training set. The machine learning algorithm described here is applied to the 20 test cases available in the test data and the predictions are submitted in appropriate format to the Course Project Prediction Quiz for automated grading.
+
+
+**Background**  
+Subjects were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+- Exactly according to the specification (Class A)
+- Throwing the elbows to the front (Class B) - mistake
+- Lifting the dumbbell only halfway (Class C) - mistake
+- Lowering the dumbbell only halfway (Class D) - mistake
+- Throwing the hips to the front (Class E) - mistake
+
+Accelerometers were located on
+1. belt
+2. forearm
+3. arm
+
+**Task**  
+Create a report describing
+- how you built your model,
+- how you used cross validation
+- what you think the expected out of sample error is
+- why you made the choices you did
+
+**Setup**  
+Due to size of the training sample (19622 observations and up to 60 variables), parallel processing was selected for model development
+```{r}
+library(caret)
+library(randomForest)
+library(e1071)
+```
+
+**QUESTION**  
+Create a model to predict the manner in which the subjects did the exercise using the accelerometer data as predictors.
+The outcome to be predicted is the “classe” variable.
+
+**INPUT**  
+**Download source data**
+```{r}
+trainingFilename   <- 'pml-training.csv'
+quizFilename       <- 'pml-testing.csv'
+```
+
+**Data Cleansing**  
+On inspection in Excel, found NA,#DIV/0! and blank values in the data. These are not valid observed values, so remove with na.strings parameter.
+```{r}
+training.df     <-read.csv(trainingFilename, na.strings=c("NA","","#DIV/0!"))
+training.df     <-training.df[,colSums(is.na(training.df)) == 0]
+dim(training.df) 
+```
+```{r}
+quiz.df         <-read.csv(quizFilename , na.strings=c("NA", "", "#DIV/0!"))
+quiz.df         <-quiz.df[,colSums(is.na(quiz.df)) == 0]
+dim(quiz.df) #;head(quiz.df,3)
+```
+
+**FEATURES**  
+
+*Reduce the number of variables*  
+Remove the non-predictors from the training set. This includes the index, subject name, time and window variables.
+```{r}
+Training.df   <-training.df[,-c(1:7)]
+Quiz.df <-quiz.df[,-c(1:7)]
+dim(Training.df)
+```
+
+**Check for near zero values in training data**
+
+```{r}
+Training.nzv<-nzv(Training.df[,-ncol(Training.df)],saveMetrics=TRUE)
+```
+None found so display and count variables submitted for the train function
+```{r}
+rownames(Training.nzv)
+```
+```{r}
+dim(Training.nzv)[1]
+```
+
+**ALGORITHM**
+
+
+*Partition the training data into a training set and a testing/validation set*
+```{r}
+inTrain     <- createDataPartition(Training.df$classe, p = 0.6, list = FALSE)
+inTraining  <- Training.df[inTrain,]
+inTest      <- Training.df[-inTrain,]
+dim(inTraining);dim(inTest)
+```
+
+**Construct the model using cross validation or reload using the cached model**
+
+Cross Validation achieved with trainControl method set to “cv”
+```{r}
+myModelFilename <- "myModel.RData"
+if (!file.exists(myModelFilename)) {
+
+    # Parallel cores  
+    #require(parallel)
+    library(doParallel)
+    ncores <- makeCluster(detectCores() - 1)
+    registerDoParallel(cores=ncores)
+    getDoParWorkers() # 3    
+    
+    # use Random Forest method with Cross Validation, 4 folds
+    myModel <- train(classe ~ .
+                , data = inTraining
+                , method = "rf"
+                , metric = "Accuracy"  # categorical outcome variable so choose accuracy
+                , preProcess=c("center", "scale") # attempt to improve accuracy by normalising
+                , trControl=trainControl(method = "cv"
+                                        , number = 4 # folds of the training data
+                                        , p= 0.60
+                                        , allowParallel = TRUE 
+#                                       , seeds=NA # don't let workers set seed 
+                                        )
+                )
+
+    save(myModel, file = "myModel.RData")
+    # 3:42 .. 3:49 without preProcess
+    # 3:51 .. 3:58 with preProcess
+    stopCluster(ncores)
+} else {
+    # Use cached model  
+    load(file = myModelFilename, verbose = TRUE)
+}
+```
+
+```{r}
+print(myModel, digits=4)
+```
+
+**PREDICT**
+
+Predicting the activity performed using the training file derived test subset
+```{r}
+predTest <- predict(myModel, newdata=inTest)
+```
+
+**EVALUATION**
+
+
+*Test*
+
+
+Check the accuracy of the model by comparing the predictions to the actual results
+```{r}
+confusionMatrix(predTest, as.factor(inTest$classe))
+```
+
+**Out of Sample Error**  
+
+The out-of-sample error of 0.0037 or 0.37%.
+
+Accuracy is very high, at 0.9963, and this figure lies within the 95% confidence interval.
+
+*Final Model data and important predictors in the model*
+```{r}
+myModel$finalModel
+```
+```{r}
+varImp(myModel)
+```
+27 variables were tried at each split and the reported OOB Estimated Error is a low 0.83%.
+
+Overall we have sufficient confidence in the prediction model to predict classe for the 20 quiz/test cases.
+
+**Validation**
+
+The accuracy of the model by predicting with the Validation set supplied in the test file.
+```{r}
+print(predict(myModel, newdata=Quiz.df))
+```
+
